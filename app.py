@@ -8,8 +8,9 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, SimpleRNN, LSTM, Dropout
+from tensorflow.keras.layers import Dense, SimpleRNN, LSTM, GRU, Dropout
 from tensorflow.keras.optimizers import Adam
+from statsmodels.tsa.seasonal import seasonal_decompose
 import io
 import warnings
 warnings.filterwarnings('ignore')
@@ -133,6 +134,20 @@ def build_lstm_model(time_steps):
     model.compile(optimizer=Adam(learning_rate=0.001), loss='mse', metrics=['mae'])
     return model
 
+def build_gru_model(time_steps):
+    """Build GRU model"""
+    model = Sequential([
+        GRU(64, return_sequences=True, input_shape=(time_steps, 1)),
+        Dropout(0.2),
+        GRU(32),
+        Dropout(0.2),
+        Dense(16, activation='relu'),
+        Dense(1)
+    ])
+    
+    model.compile(optimizer=Adam(learning_rate=0.001), loss='mse', metrics=['mae'])
+    return model
+
 def train_model(model, X_train, y_train, epochs, batch_size, validation_split=0.2):
     """Train a model with given parameters"""
     # Early stopping callback
@@ -163,7 +178,7 @@ def predict_future_steps(model, last_sequence, scaler, n_steps, model_type):
             # For ANN, use the sequence as is
             pred_input = current_sequence.reshape(1, -1)
         else:
-            # For RNN/LSTM, reshape to (1, time_steps, 1)
+            # For RNN/LSTM/GRU, reshape to (1, time_steps, 1)
             pred_input = current_sequence.reshape(1, len(current_sequence), 1)
         
         next_pred = model.predict(pred_input, verbose=0)[0, 0]
@@ -229,7 +244,170 @@ def create_prediction_plot(y_true, y_pred, model_name, future_predictions=None):
     
     return fig
 
+def create_training_history_plot(history, model_name):
+    """Create interactive plot for training history (loss curves)"""
+    fig = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=['Training & Validation Loss', 'Training & Validation MAE']
+    )
+    
+    epochs = range(1, len(history.history['loss']) + 1)
+    
+    # Loss plot
+    fig.add_trace(
+        go.Scatter(
+            x=list(epochs),
+            y=history.history['loss'],
+            mode='lines',
+            name='Training Loss',
+            line=dict(color='blue', width=2)
+        ),
+        row=1, col=1
+    )
+    
+    if 'val_loss' in history.history:
+        fig.add_trace(
+            go.Scatter(
+                x=list(epochs),
+                y=history.history['val_loss'],
+                mode='lines',
+                name='Validation Loss',
+                line=dict(color='red', width=2, dash='dash')
+            ),
+            row=1, col=1
+        )
+    
+    # MAE plot
+    if 'mae' in history.history:
+        fig.add_trace(
+            go.Scatter(
+                x=list(epochs),
+                y=history.history['mae'],
+                mode='lines',
+                name='Training MAE',
+                line=dict(color='green', width=2),
+                showlegend=True
+            ),
+            row=1, col=2
+        )
+    
+    if 'val_mae' in history.history:
+        fig.add_trace(
+            go.Scatter(
+                x=list(epochs),
+                y=history.history['val_mae'],
+                mode='lines',
+                name='Validation MAE',
+                line=dict(color='orange', width=2, dash='dash'),
+                showlegend=True
+            ),
+            row=1, col=2
+        )
+    
+    fig.update_xaxes(title_text="Epoch", row=1, col=1)
+    fig.update_xaxes(title_text="Epoch", row=1, col=2)
+    fig.update_yaxes(title_text="Loss (MSE)", row=1, col=1)
+    fig.update_yaxes(title_text="MAE", row=1, col=2)
+    
+    fig.update_layout(
+        title=f'{model_name} - Training History',
+        height=350,
+        hovermode='x unified'
+    )
+    
+    return fig
+
+def perform_seasonal_decomposition(data, column_name, period=30):
+    """Perform seasonal decomposition and create visualization"""
+    try:
+        # Ensure sufficient data for decomposition
+        if len(data) < 2 * period:
+            return None, f"Need at least {2 * period} data points for decomposition with period={period}"
+        
+        # Perform decomposition
+        decomposition = seasonal_decompose(
+            data[column_name].values,
+            model='additive',
+            period=period,
+            extrapolate_trend='freq'
+        )
+        
+        # Create subplots
+        fig = make_subplots(
+            rows=4, cols=1,
+            subplot_titles=['Original', 'Trend', 'Seasonal', 'Residual'],
+            vertical_spacing=0.08
+        )
+        
+        # Original data
+        fig.add_trace(
+            go.Scatter(
+                y=data[column_name].values,
+                mode='lines',
+                name='Original',
+                line=dict(color='blue', width=1.5)
+            ),
+            row=1, col=1
+        )
+        
+        # Trend
+        fig.add_trace(
+            go.Scatter(
+                y=decomposition.trend,
+                mode='lines',
+                name='Trend',
+                line=dict(color='green', width=2)
+            ),
+            row=2, col=1
+        )
+        
+        # Seasonal
+        fig.add_trace(
+            go.Scatter(
+                y=decomposition.seasonal,
+                mode='lines',
+                name='Seasonal',
+                line=dict(color='orange', width=1.5)
+            ),
+            row=3, col=1
+        )
+        
+        # Residual
+        fig.add_trace(
+            go.Scatter(
+                y=decomposition.resid,
+                mode='lines',
+                name='Residual',
+                line=dict(color='red', width=1)
+            ),
+            row=4, col=1
+        )
+        
+        fig.update_layout(
+            title=f'Seasonal Decomposition - {column_name}',
+            height=800,
+            showlegend=False,
+            hovermode='x unified'
+        )
+        
+        fig.update_xaxes(title_text="Time", row=4, col=1)
+        
+        return fig, None
+        
+    except Exception as e:
+        return None, f"Error in decomposition: {str(e)}"
+
 def main():
+    # Initialize session state for data persistence
+    if 'data' not in st.session_state:
+        st.session_state.data = None
+    if 'data_source' not in st.session_state:
+        st.session_state.data_source = None
+    if 'saved_models' not in st.session_state:
+        st.session_state.saved_models = {}
+    if 'saved_scalers' not in st.session_state:
+        st.session_state.saved_scalers = {}
+    
     # Main header
     st.markdown('<div class="main-header">🟢 Multi-Model Time Series Forecasting</div>', unsafe_allow_html=True)
     
@@ -251,19 +429,23 @@ def main():
     with col2:
         use_demo = st.button("Use Demo Data", type="secondary")
     
-    # Load data
-    data = None
+    # Load data and persist in session state
     if uploaded_file is not None:
         try:
-            data = pd.read_csv(uploaded_file)
-            st.success(f"✅ File uploaded successfully! Shape: {data.shape}")
+            st.session_state.data = pd.read_csv(uploaded_file)
+            st.session_state.data_source = "uploaded"
+            st.success(f"✅ File uploaded successfully! Shape: {st.session_state.data.shape}")
         except Exception as e:
             st.error(f"❌ Error loading file: {str(e)}")
             return
     elif use_demo:
-        data = create_demo_data()
+        st.session_state.data = create_demo_data()
+        st.session_state.data_source = "demo"
         st.success("✅ Demo data loaded successfully!")
         st.info("📊 Demo data contains 500 days of synthetic time series with trend and seasonality")
+    
+    # Get data from session state
+    data = st.session_state.data
     
     if data is not None:
         # Display data preview
@@ -305,6 +487,42 @@ def main():
         )
         st.plotly_chart(fig_original, use_container_width=True)
         
+        # Seasonal decomposition analysis
+        st.subheader("🔍 Seasonal Decomposition Analysis")
+        
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            show_decomposition = st.checkbox("Show Decomposition", value=False)
+        
+        if show_decomposition:
+            # Check if dataset is large enough for decomposition
+            min_period = 7
+            max_period_calc = len(data) // 3
+            
+            if max_period_calc < min_period:
+                st.warning(f"⚠️ Dataset too small for seasonal decomposition. Need at least {min_period * 3} data points.")
+            else:
+                with col2:
+                    decomp_period = st.slider(
+                        "Seasonal Period",
+                        min_value=min_period,
+                        max_value=min(365, max_period_calc),
+                        value=min(30, max_period_calc),
+                        help="The period of the seasonal component (e.g., 7 for weekly, 30 for monthly)"
+                    )
+                
+                # Ensure period is valid for current data length
+                if decomp_period >= len(data) // 2:
+                    st.warning(f"⚠️ Period ({decomp_period}) is too large for dataset size ({len(data)}). Maximum period is {len(data) // 2 - 1}.")
+                else:
+                    decomp_fig, error = perform_seasonal_decomposition(data, target_column, decomp_period)
+                    
+                    if decomp_fig is not None:
+                        st.plotly_chart(decomp_fig, use_container_width=True)
+                        st.info("📊 Seasonal decomposition breaks down the time series into trend, seasonal, and residual components.")
+                    else:
+                        st.warning(f"⚠️ {error}")
+        
         # Model configuration in sidebar
         st.sidebar.subheader("🔧 Training Parameters")
         
@@ -336,7 +554,7 @@ def main():
         st.sidebar.subheader("🤖 Model Selection")
         selected_models = st.sidebar.multiselect(
             "Select Models to Train",
-            ["ANN", "RNN", "LSTM"],
+            ["ANN", "RNN", "LSTM", "GRU"],
             default=["LSTM"],
             help="Choose which models to train and compare"
         )
@@ -402,8 +620,12 @@ def main():
                         model = build_rnn_model(sequence_length)
                         train_X = X_train.reshape((X_train.shape[0], X_train.shape[1], 1))
                         test_X = X_test.reshape((X_test.shape[0], X_test.shape[1], 1))
-                    else:  # LSTM
+                    elif model_name == "LSTM":
                         model = build_lstm_model(sequence_length)
+                        train_X = X_train.reshape((X_train.shape[0], X_train.shape[1], 1))
+                        test_X = X_test.reshape((X_test.shape[0], X_test.shape[1], 1))
+                    elif model_name == "GRU":
+                        model = build_gru_model(sequence_length)
                         train_X = X_train.reshape((X_train.shape[0], X_train.shape[1], 1))
                         test_X = X_test.reshape((X_test.shape[0], X_test.shape[1], 1))
                     
@@ -446,6 +668,10 @@ def main():
                         'history': history
                     }
                     
+                    # Auto-save model to session state
+                    st.session_state.saved_models[model_name] = trained_model
+                    st.session_state.saved_scalers[model_name] = scaler
+                    
                     model_performances.append({
                         'Model': model_name,
                         'RMSE': rmse,
@@ -487,14 +713,24 @@ def main():
                 for model_name, result in results.items():
                     st.write(f"### {model_name} Model Results")
                     
-                    # Create prediction plot
-                    fig = create_prediction_plot(
-                        result['y_test'],
-                        result['y_pred'],
-                        model_name,
-                        result['future_predictions'] if enable_multistep else None
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
+                    # Create two columns for plots
+                    col1, col2 = st.columns([1, 1])
+                    
+                    with col1:
+                        # Create prediction plot
+                        fig = create_prediction_plot(
+                            result['y_test'],
+                            result['y_pred'],
+                            model_name,
+                            result['future_predictions'] if enable_multistep else None
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    with col2:
+                        # Create training history plot
+                        if result['history'] is not None:
+                            history_fig = create_training_history_plot(result['history'], model_name)
+                            st.plotly_chart(history_fig, use_container_width=True)
                     
                     # Show future predictions if enabled
                     if enable_multistep and result['future_predictions'] is not None:
@@ -537,6 +773,136 @@ def main():
                     )
                 
                 st.success("🎉 Training and forecasting completed successfully!")
+        
+        # Model Management Section
+        if st.session_state.saved_models:
+            st.header("💾 Saved Models")
+            
+            st.info(f"You have {len(st.session_state.saved_models)} saved model(s) in this session that can be reused without retraining.")
+            
+            # Display saved models
+            saved_models_df = pd.DataFrame({
+                'Model Name': list(st.session_state.saved_models.keys()),
+                'Status': ['Ready' for _ in st.session_state.saved_models]
+            })
+            st.dataframe(saved_models_df, use_container_width=True)
+            
+            # Use saved model for inference
+            st.subheader("🔮 Use Saved Model for Forecasting")
+            
+            col1, col2, col3 = st.columns([2, 1, 1])
+            
+            with col1:
+                selected_saved_model = st.selectbox(
+                    "Select a saved model",
+                    list(st.session_state.saved_models.keys())
+                )
+            
+            with col2:
+                forecast_steps_saved = st.number_input(
+                    "Future Steps",
+                    min_value=1,
+                    max_value=50,
+                    value=5,
+                    key="forecast_steps_saved"
+                )
+            
+            with col3:
+                if st.button("📊 Generate Forecast", type="primary"):
+                    if selected_saved_model and data is not None:
+                        try:
+                            # Get saved model and scaler
+                            saved_model = st.session_state.saved_models[selected_saved_model]
+                            saved_scaler = st.session_state.saved_scalers[selected_saved_model]
+                            
+                            # Prepare data
+                            values = data[target_column].values.reshape(-1, 1)
+                            scaled_values = saved_scaler.transform(values)
+                            
+                            # Get last sequence
+                            sequence_len = saved_model.input_shape[1] if len(saved_model.input_shape) > 2 else saved_model.input_shape[1]
+                            last_sequence = scaled_values[-sequence_len:, 0]
+                            
+                            # Generate forecast
+                            future_preds = predict_future_steps(
+                                saved_model,
+                                last_sequence,
+                                saved_scaler,
+                                forecast_steps_saved,
+                                selected_saved_model
+                            )
+                            
+                            # Display results
+                            st.success(f"✅ Generated {forecast_steps_saved} future predictions using {selected_saved_model}")
+                            
+                            # Create visualization
+                            fig = go.Figure()
+                            
+                            # Historical data (last 100 points)
+                            hist_data = data[target_column].values[-100:]
+                            fig.add_trace(
+                                go.Scatter(
+                                    y=hist_data,
+                                    mode='lines',
+                                    name='Historical',
+                                    line=dict(color='blue', width=2)
+                                )
+                            )
+                            
+                            # Future predictions
+                            future_x = list(range(len(hist_data), len(hist_data) + len(future_preds)))
+                            fig.add_trace(
+                                go.Scatter(
+                                    x=future_x,
+                                    y=future_preds,
+                                    mode='lines+markers',
+                                    name='Forecast',
+                                    line=dict(color='green', width=2),
+                                    marker=dict(size=8)
+                                )
+                            )
+                            
+                            fig.update_layout(
+                                title=f'Forecast using {selected_saved_model}',
+                                xaxis_title='Time Steps',
+                                yaxis_title='Value',
+                                height=400
+                            )
+                            
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            # Show forecast table
+                            forecast_df = pd.DataFrame({
+                                'Step': range(1, forecast_steps_saved + 1),
+                                'Predicted Value': future_preds
+                            })
+                            st.dataframe(forecast_df, use_container_width=True)
+                            
+                            # Download button
+                            csv_buffer = io.StringIO()
+                            forecast_df.to_csv(csv_buffer, index=False)
+                            csv_data = csv_buffer.getvalue()
+                            
+                            st.download_button(
+                                label=f"📥 Download Forecast",
+                                data=csv_data,
+                                file_name=f"{selected_saved_model}_forecast.csv",
+                                mime="text/csv",
+                                key=f"download_forecast_{selected_saved_model}"
+                            )
+                            
+                        except Exception as e:
+                            st.error(f"❌ Error generating forecast: {str(e)}")
+                    else:
+                        st.warning("⚠️ Please load data first!")
+            
+            st.markdown("---")
+            
+            # Option to clear saved models
+            if st.button("🗑️ Clear All Saved Models"):
+                st.session_state.saved_models = {}
+                st.session_state.saved_scalers = {}
+                st.rerun()
     
     else:
         st.info("👆 Please upload a CSV file or use demo data to get started.")
@@ -557,6 +923,7 @@ def main():
         - **ANN (Artificial Neural Network)**: Feedforward network for short-term predictions
         - **RNN (Recurrent Neural Network)**: Vanilla RNN for capturing sequential dependencies  
         - **LSTM (Long Short-Term Memory)**: Advanced RNN for long-term dependencies and trends
+        - **GRU (Gated Recurrent Unit)**: Efficient RNN variant with faster training than LSTM
         """)
 
 if __name__ == "__main__":
