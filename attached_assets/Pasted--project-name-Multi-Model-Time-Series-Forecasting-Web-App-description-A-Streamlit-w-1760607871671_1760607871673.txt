@@ -1,0 +1,112 @@
+{
+  "project_name": "Multi-Model Time Series Forecasting Web App",
+  "description": "A Streamlit web app for time series forecasting that supports multiple models: ANN, RNN, and LSTM. Users can upload CSV data, customize model parameters, train selected models, visualize predictions, compare RMSE, and forecast next values.",
+  "platform": "Streamlit / Replit",
+  "language": "Python",
+  "libraries": [
+    "numpy",
+    "pandas",
+    "matplotlib",
+    "plotly",
+    "scikit-learn",
+    "tensorflow",
+    "streamlit"
+  ],
+  "ui_design": {
+    "theme": "Modern, Clean, Interactive",
+    "layout": "Wide",
+    "components": [
+      {"type": "header", "text": "🟢 Multi-Model Time Series Forecasting", "style": "bold, large"},
+      {"type": "file_upload", "label": "Upload CSV", "description": "Upload a CSV file with one numeric column."},
+      {"type": "slider", "label": "Sequence Length", "min": 10, "max": 100, "default": 50},
+      {"type": "number_input", "label": "Epochs", "min": 10, "max": 500, "default": 50},
+      {"type": "number_input", "label": "Batch Size", "min": 16, "max": 128, "default": 32},
+      {"type": "checkbox_group", "label": "Select Models", "options": ["ANN", "RNN", "LSTM"], "default": ["LSTM"]},
+      {"type": "checkbox", "label": "Enable Multi-Step Forecast", "default": false},
+      {"type": "number_input", "label": "Number of Future Steps", "min": 1, "max": 50, "default": 5},
+      {"type": "button", "label": "Train and Forecast"},
+      {"type": "plot_area", "label": "Actual vs Predicted for Each Model"},
+      {"type": "table", "label": "Model RMSE Comparison"},
+      {"type": "download_button", "label": "Download Predictions"}
+    ]
+  },
+  "models": [
+    {
+      "name": "ANN",
+      "architecture": ["Dense(64, relu)", "Dense(32, relu)", "Dense(1)"],
+      "description": "Feedforward network for short-term prediction."
+    },
+    {
+      "name": "RNN",
+      "architecture": ["SimpleRNN(50, return_sequences=True)", "SimpleRNN(25)", "Dense(1)"],
+      "description": "Vanilla RNN for capturing sequential dependencies."
+    },
+    {
+      "name": "LSTM",
+      "architecture": ["LSTM(64, return_sequences=True)", "LSTM(32)", "Dense(16, relu)", "Dense(1)"],
+      "description": "LSTM for long-term dependencies and trends."
+    }
+  ],
+  "functions": [
+    {
+      "name": "preprocess_data",
+      "description": "Normalize data and create sliding windows for all models.",
+      "inputs": ["dataframe", "time_steps"],
+      "outputs": ["X", "y", "scaler"]
+    },
+    {
+      "name": "build_ann",
+      "description": "Builds a feedforward ANN model.",
+      "inputs": ["time_steps"],
+      "outputs": ["compiled ANN model"]
+    },
+    {
+      "name": "build_rnn",
+      "description": "Builds a Vanilla RNN model.",
+      "inputs": ["time_steps"],
+      "outputs": ["compiled RNN model"]
+    },
+    {
+      "name": "build_lstm",
+      "description": "Builds an LSTM model.",
+      "inputs": ["time_steps"],
+      "outputs": ["compiled LSTM model"]
+    },
+    {
+      "name": "train_model",
+      "description": "Trains a selected model with given parameters.",
+      "inputs": ["model", "X_train", "y_train", "epochs", "batch_size"],
+      "outputs": ["trained model", "history"]
+    },
+    {
+      "name": "predict_next",
+      "description": "Predict next value(s) for a given trained model.",
+      "inputs": ["model", "latest sequence", "scaler", "time_steps", "n_steps"],
+      "outputs": ["predicted value(s)"]
+    },
+    {
+      "name": "plot_predictions",
+      "description": "Plot actual vs predicted values for comparison.",
+      "inputs": ["y_true", "y_pred"],
+      "outputs": ["plot figure"]
+    }
+  ],
+  "workflow": [
+    "User uploads CSV or uses demo data.",
+    "User sets sequence length, epochs, batch size, selects models, and optionally multi-step forecast.",
+    "User clicks 'Train and Forecast'.",
+    "App preprocesses data and creates sequences.",
+    "App builds selected models (ANN/RNN/LSTM).",
+    "App trains each model and stores training history.",
+    "App predicts test set values and next steps for each model.",
+    "App computes RMSE for each model.",
+    "App displays Actual vs Predicted plots for each model.",
+    "App displays next predicted value(s) for each model.",
+    "User can download predictions for each model."
+  ],
+  "deployment": {
+    "platform": ["Replit", "Streamlit Cloud", "Heroku"],
+    "run_command": "streamlit run main.py --server.port=$PORT --server.address=0.0.0.0",
+    "notes": "Public URL provided automatically for Replit or Streamlit Cloud."
+  }
+}
